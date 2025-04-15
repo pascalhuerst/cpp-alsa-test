@@ -13,10 +13,10 @@ struct AudioFrame {
 class AlsaAudio {
 public:
   using AudioCallback = std::function<void(
-      const AudioFrame *input, AudioFrame *output, size_t numFrames)>;
+      const AudioFrame *input, AudioFrame *output, size_t num_frames)>;
 
   AlsaAudio(const std::string &device, unsigned int channels,
-            unsigned int sampleRate,
+            unsigned int sample_rate,
             unsigned int latency, // in microseconds
             unsigned int periods, snd_pcm_format_t format,
             AudioCallback callback);
@@ -26,14 +26,14 @@ public:
   void stop();
 
 private:
-  void processAudio();
+  void process_audio();
 
-  snd_pcm_t *captureHandle;
-  snd_pcm_t *playbackHandle;
+  snd_pcm_t *capture_handle;
+  snd_pcm_t *playback_handle;
   AudioCallback callback;
   std::atomic<bool> running;
   unsigned int channels;
-  unsigned int periodSize;
-  std::vector<AudioFrame> inputBuffer;
-  std::vector<AudioFrame> outputBuffer;
+  unsigned int period_size;
+  std::vector<AudioFrame> input_buffer;
+  std::vector<AudioFrame> output_buffer;
 };

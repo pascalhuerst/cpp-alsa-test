@@ -43,6 +43,7 @@ int main(int argc, char **argv) {
   }
 
   try {
+    std::cout << "Using format: SND_PCM_FORMAT_S16_LE" << std::endl;
     AlsaAudio audio(
         dev, channels, rate, latency, periods, SND_PCM_FORMAT_S16_LE,
         [](const AudioFrame *input, AudioFrame *output, size_t numFrames) {

@@ -54,6 +54,15 @@ AlsaAudio::AlsaAudio(const std::string &device, unsigned int channels,
                              std::string(snd_strerror(rc)));
   }
 
+  // Get capture parameters right after configuration
+  int dir;
+  snd_pcm_uframes_t capture_buffer_size;
+  snd_pcm_uframes_t capture_period_size;
+
+  snd_pcm_hw_params_get_buffer_size(hw_params, &capture_buffer_size);
+  snd_pcm_hw_params_get_period_size(hw_params, &capture_period_size, &dir);
+  double capture_latency = (double)capture_buffer_size * 1000.0 / sample_rate;
+
   // Configure playback with same parameters
   snd_pcm_hw_params_any(playback_handle, hw_params);
   snd_pcm_hw_params_set_access(playback_handle, hw_params,
@@ -74,32 +83,31 @@ AlsaAudio::AlsaAudio(const std::string &device, unsigned int channels,
                              std::string(snd_strerror(rc)));
   }
 
-  int dir;
+  // Get playback parameters
+  snd_pcm_uframes_t playback_buffer_size;
+  snd_pcm_uframes_t playback_period_size;
 
-  // Get capture parameters
-  snd_pcm_hw_params_get_buffer_size(hw_params, &buffer_size);
-  snd_pcm_hw_params_get_period_size(hw_params, &period_size, &dir);
+  snd_pcm_hw_params_get_buffer_size(hw_params, &playback_buffer_size);
+  snd_pcm_hw_params_get_period_size(hw_params, &playback_period_size, &dir);
+  double playback_latency = (double)playback_buffer_size * 1000.0 / sample_rate;
+  double total_latency = capture_latency + playback_latency;
 
-  double capture_latency = (double)buffer_size * 1000.0 / sample_rate;
+  // Store the period size we'll use for audio processing
+  period_size = playback_period_size;
 
   std::cout << "\nCapture Configuration:" << std::endl;
-  std::cout << "Buffer Size: " << buffer_size << " frames" << std::endl;
-  std::cout << "Period Size: " << period_size << " frames" << std::endl;
+  std::cout << "Buffer Size: " << capture_buffer_size << " frames" << std::endl;
+  std::cout << "Period Size: " << capture_period_size << " frames" << std::endl;
   std::cout << "Periods: " << periods << std::endl;
   std::cout << "Sample Rate: " << sample_rate << " Hz" << std::endl;
   std::cout << "Channels: " << channels << std::endl;
   std::cout << "Latency: " << capture_latency << " ms" << std::endl;
 
-  // Configure playback with same parameters
-  snd_pcm_hw_params_get_buffer_size(hw_params, &buffer_size);
-  snd_pcm_hw_params_get_period_size(hw_params, &period_size, &dir);
-
-  double playback_latency = (double)buffer_size * 1000.0 / sample_rate;
-  double total_latency = capture_latency + playback_latency;
-
   std::cout << "\nPlayback Configuration:" << std::endl;
-  std::cout << "Buffer Size: " << buffer_size << " frames" << std::endl;
-  std::cout << "Period Size: " << period_size << " frames" << std::endl;
+  std::cout << "Buffer Size: " << playback_buffer_size << " frames"
+            << std::endl;
+  std::cout << "Period Size: " << playback_period_size << " frames"
+            << std::endl;
   std::cout << "Periods: " << periods << std::endl;
   std::cout << "Sample Rate: " << sample_rate << " Hz" << std::endl;
   std::cout << "Channels: " << channels << std::endl;
@@ -129,9 +137,13 @@ void AlsaAudio::start() {
 void AlsaAudio::stop() { running = false; }
 
 void AlsaAudio::process_audio() {
+  // Allocate intermediate buffers for format conversion
+  std::vector<int16_t> capture_buffer(period_size * channels);
+  std::vector<int16_t> playback_buffer(period_size * channels);
+
   while (running.load()) {
     // Read from capture device
-    int rc = snd_pcm_readi(capture_handle, input_buffer.data(), period_size);
+    int rc = snd_pcm_readi(capture_handle, capture_buffer.data(), period_size);
     if (rc == -EPIPE) {
       // Overrun occurred
       std::cerr << "Capture overrun occurred" << std::endl;
@@ -160,11 +172,25 @@ void AlsaAudio::process_audio() {
                 << std::endl;
     }
 
+    // Convert from int16 to float
+    for (size_t i = 0; i < period_size; i++) {
+      input_buffer[i].left = capture_buffer[i * 2] / 32768.0f;
+      input_buffer[i].right = capture_buffer[i * 2 + 1] / 32768.0f;
+    }
+
     // Process audio
     callback(input_buffer.data(), output_buffer.data(), period_size);
 
+    // Convert from float to int16
+    for (size_t i = 0; i < period_size; i++) {
+      playback_buffer[i * 2] =
+          static_cast<int16_t>(output_buffer[i].left * 32767.0f);
+      playback_buffer[i * 2 + 1] =
+          static_cast<int16_t>(output_buffer[i].right * 32767.0f);
+    }
+
     // Write to playback device
-    rc = snd_pcm_writei(playback_handle, output_buffer.data(), period_size);
+    rc = snd_pcm_writei(playback_handle, playback_buffer.data(), period_size);
     if (rc == -EPIPE) {
       // Underrun occurred
       std::cerr << "Playback underrun occurred" << std::endl;

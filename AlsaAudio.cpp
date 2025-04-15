@@ -1,13 +1,15 @@
 #include "AlsaAudio.h"
+#include <alsa/asoundlib.h>
 #include <iostream>
 #include <stdexcept>
 #include <thread>
+#include <unistd.h> // for sleep()
 
 AlsaAudio::AlsaAudio(const std::string &device, unsigned int channels,
-                     unsigned int sampleRate, unsigned int periodSize,
-                     snd_pcm_format_t format, AudioCallback callback)
-    : callback(callback), running(false), channels(channels),
-      periodSize(periodSize) {
+                     unsigned int sampleRate, unsigned int latency,
+                     unsigned int periods, snd_pcm_format_t format,
+                     AudioCallback callback)
+    : callback(callback), running(false), channels(channels) {
 
   // Open PCM device for recording
   int rc =
@@ -37,26 +39,77 @@ AlsaAudio::AlsaAudio(const std::string &device, unsigned int channels,
   snd_pcm_hw_params_set_format(captureHandle, hw_params, format);
   snd_pcm_hw_params_set_channels(captureHandle, hw_params, channels);
   snd_pcm_hw_params_set_rate(captureHandle, hw_params, sampleRate, 0);
-  snd_pcm_hw_params_set_period_size(captureHandle, hw_params, periodSize, 0);
+
+  // Set low latency parameters
+  snd_pcm_uframes_t buffer_size = (sampleRate * latency) / 1000000;
+  snd_pcm_hw_params_set_buffer_size_near(captureHandle, hw_params,
+                                         &buffer_size);
+  snd_pcm_uframes_t period_size = buffer_size / periods;
+  snd_pcm_hw_params_set_period_size_near(captureHandle, hw_params, &period_size,
+                                         0);
+
   rc = snd_pcm_hw_params(captureHandle, hw_params);
   if (rc < 0) {
     throw std::runtime_error("Cannot configure capture device: " +
                              std::string(snd_strerror(rc)));
   }
 
-  // Configure playback
+  // Configure playback with same parameters
   snd_pcm_hw_params_any(playbackHandle, hw_params);
   snd_pcm_hw_params_set_access(playbackHandle, hw_params,
                                SND_PCM_ACCESS_RW_INTERLEAVED);
   snd_pcm_hw_params_set_format(playbackHandle, hw_params, format);
   snd_pcm_hw_params_set_channels(playbackHandle, hw_params, channels);
   snd_pcm_hw_params_set_rate(playbackHandle, hw_params, sampleRate, 0);
-  snd_pcm_hw_params_set_period_size(playbackHandle, hw_params, periodSize, 0);
+
+  // Use same low latency parameters for playback
+  snd_pcm_hw_params_set_buffer_size_near(playbackHandle, hw_params,
+                                         &buffer_size);
+  snd_pcm_hw_params_set_period_size_near(playbackHandle, hw_params,
+                                         &period_size, 0);
+
   rc = snd_pcm_hw_params(playbackHandle, hw_params);
   if (rc < 0) {
     throw std::runtime_error("Cannot configure playback device: " +
                              std::string(snd_strerror(rc)));
   }
+
+  // Update periodSize member with actual value used
+  periodSize = period_size;
+
+  int dir;
+
+  // Get capture parameters
+  snd_pcm_hw_params_get_buffer_size(hw_params, &buffer_size);
+  snd_pcm_hw_params_get_period_size(hw_params, &period_size, &dir);
+
+  double capture_latency = (double)buffer_size * 1000.0 / sampleRate;
+
+  std::cout << "\nCapture Configuration:" << std::endl;
+  std::cout << "Buffer Size: " << buffer_size << " frames" << std::endl;
+  std::cout << "Period Size: " << period_size << " frames" << std::endl;
+  std::cout << "Periods: " << periods << std::endl;
+  std::cout << "Sample Rate: " << sampleRate << " Hz" << std::endl;
+  std::cout << "Channels: " << channels << std::endl;
+  std::cout << "Latency: " << capture_latency << " ms" << std::endl;
+
+  // Configure playback with same parameters
+  snd_pcm_hw_params_get_buffer_size(hw_params, &buffer_size);
+  snd_pcm_hw_params_get_period_size(hw_params, &period_size, &dir);
+
+  double playback_latency = (double)buffer_size * 1000.0 / sampleRate;
+  double total_latency = capture_latency + playback_latency;
+
+  std::cout << "\nPlayback Configuration:" << std::endl;
+  std::cout << "Buffer Size: " << buffer_size << " frames" << std::endl;
+  std::cout << "Period Size: " << period_size << " frames" << std::endl;
+  std::cout << "Periods: " << periods << std::endl;
+  std::cout << "Sample Rate: " << sampleRate << " Hz" << std::endl;
+  std::cout << "Channels: " << channels << std::endl;
+  std::cout << "Latency: " << playback_latency << " ms" << std::endl;
+  std::cout << "\nTotal Round-trip Latency: " << total_latency << " ms"
+            << std::endl;
+  std::cout << std::endl;
 
   inputBuffer.resize(periodSize);
   outputBuffer.resize(periodSize);

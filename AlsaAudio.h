@@ -16,8 +16,10 @@ public:
       const AudioFrame *input, AudioFrame *output, size_t numFrames)>;
 
   AlsaAudio(const std::string &device, unsigned int channels,
-            unsigned int sampleRate, unsigned int periodSize,
-            snd_pcm_format_t format, AudioCallback callback);
+            unsigned int sampleRate,
+            unsigned int latency, // in microseconds
+            unsigned int periods, snd_pcm_format_t format,
+            AudioCallback callback);
   ~AlsaAudio();
 
   void start();

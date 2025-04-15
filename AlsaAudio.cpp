@@ -1,6 +1,7 @@
 #include "AlsaAudio.h"
 #include <alsa/asoundlib.h>
 #include <iostream>
+#include <limits>
 #include <stdexcept>
 #include <thread>
 #include <unistd.h> // for sleep()
@@ -137,12 +138,12 @@ void AlsaAudio::start() {
 void AlsaAudio::stop() { running = false; }
 
 void AlsaAudio::process_audio() {
-  // Allocate intermediate buffers for format conversion
   std::vector<int16_t> capture_buffer(period_size * channels);
   std::vector<int16_t> playback_buffer(period_size * channels);
+  const float int16_max =
+      static_cast<float>(std::numeric_limits<int16_t>::max());
 
   while (running.load()) {
-    // Read from capture device
     int rc = snd_pcm_readi(capture_handle, capture_buffer.data(), period_size);
     if (rc == -EPIPE) {
       // Overrun occurred
@@ -172,24 +173,22 @@ void AlsaAudio::process_audio() {
                 << std::endl;
     }
 
-    // Convert from int16 to float
+    // Convert from int16 to float [-1.0, 1.0]
     for (size_t i = 0; i < period_size; i++) {
-      input_buffer[i].left = capture_buffer[i * 2] / 32768.0f;
-      input_buffer[i].right = capture_buffer[i * 2 + 1] / 32768.0f;
+      input_buffer[i].left = capture_buffer[i * 2] / int16_max;
+      input_buffer[i].right = capture_buffer[i * 2 + 1] / int16_max;
     }
 
-    // Process audio
     callback(input_buffer.data(), output_buffer.data(), period_size);
 
-    // Convert from float to int16
+    // Convert from float [-1.0, 1.0] to int16
     for (size_t i = 0; i < period_size; i++) {
       playback_buffer[i * 2] =
-          static_cast<int16_t>(output_buffer[i].left * 32767.0f);
+          static_cast<int16_t>(output_buffer[i].left * int16_max);
       playback_buffer[i * 2 + 1] =
-          static_cast<int16_t>(output_buffer[i].right * 32767.0f);
+          static_cast<int16_t>(output_buffer[i].right * int16_max);
     }
 
-    // Write to playback device
     rc = snd_pcm_writei(playback_handle, playback_buffer.data(), period_size);
     if (rc == -EPIPE) {
       // Underrun occurred
